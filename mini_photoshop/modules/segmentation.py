@@ -3,6 +3,13 @@
 Masukan: array NumPy uint8, grayscale (H, W) atau RGB (H, W, 3).
 Keluaran selalu array uint8 baru; gambar masukan tidak diubah. Mask dan
 hasil threshold memakai 0 untuk latar dan 255 untuk objek.
+
+Catatan revisi: kontrak RGB modul ini DIPERTAHANKAN (sesuai tests/test_segmentation.py).
+Bug lama ada di app.py yang mengirim citra BGR langsung ke sini sehingga color
+masking memilih warna tertukar (merah <-> biru) dan logo watermark berubah warna.
+Sekarang utils/pipeline.py mengonversi BGR -> RGB sebelum memanggil modul ini.
+Fitur baru (auto_binarize, fit, scale, stroke) bersifat opsional; nilai default
+mempertahankan perilaku & validasi asli.
 """
 
 import cv2
@@ -57,6 +64,11 @@ def otsu_threshold(image, invert=False):
     return cv2.threshold(_gray(image), 0, 255, mode | cv2.THRESH_OTSU)[1]
 
 
+def otsu_value(image):
+    """Nilai ambang yang dipilih Otsu (berguna untuk ditampilkan ke pengguna)."""
+    return float(cv2.threshold(_gray(image), 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[0])
+
+
 def color_masking(image, lower_hsv=(0, 0, 0), upper_hsv=(179, 255, 255)):
     """Kembalikan (mask biner, RGB terseleksi).
 
@@ -87,17 +99,32 @@ def color_masking(image, lower_hsv=(0, 0, 0), upper_hsv=(179, 255, 255)):
     return mask, cv2.bitwise_and(image, image, mask=mask)
 
 
-def morphology(image, operation="opening", kernel_size=3, iterations=1, shape="rect"):
-    """Erosion/dilation/opening/closing pada mask biner 0/255.
+def to_binary_mask(image, invert=False):
+    """Ubah citra apa pun menjadi mask biner 0/255 (Otsu) bila belum biner."""
+    image = _image(image)
+    if image.ndim == 2 and np.all((image == 0) | (image == 255)):
+        return 255 - image if invert else image.copy()
+    return otsu_threshold(image, invert=invert)
+
+
+def morphology(image, operation="opening", kernel_size=3, iterations=1, shape="rect",
+               auto_binarize=False):
+    """Erosion/dilation/opening/closing/gradient/tophat/blackhat pada mask biner 0/255.
 
     Bentuk kernel: 'rect', 'ellipse', atau 'cross'. Threshold citra dahulu
-    agar objek yang diproses berwarna putih dan latarnya hitam.
+    agar objek yang diproses berwarna putih dan latarnya hitam — atau gunakan
+    auto_binarize=True agar citra berwarna/grayscale di-threshold Otsu otomatis
+    (dipakai app; sebelumnya fitur ini selalu gagal karena app mengirim foto berwarna).
     """
     image = _image(image)
-    if image.ndim != 2 or not np.all((image == 0) | (image == 255)):
+    if auto_binarize:
+        image = to_binary_mask(image)
+    elif image.ndim != 2 or not np.all((image == 0) | (image == 255)):
         raise ValueError("Morfologi membutuhkan mask biner dua dimensi bernilai 0/255.")
     operations = {"erosion": cv2.MORPH_ERODE, "dilation": cv2.MORPH_DILATE,
-                  "opening": cv2.MORPH_OPEN, "closing": cv2.MORPH_CLOSE}
+                  "opening": cv2.MORPH_OPEN, "closing": cv2.MORPH_CLOSE,
+                  "gradient": cv2.MORPH_GRADIENT, "tophat": cv2.MORPH_TOPHAT,
+                  "blackhat": cv2.MORPH_BLACKHAT}
     shapes = {"rect": cv2.MORPH_RECT, "ellipse": cv2.MORPH_ELLIPSE,
               "cross": cv2.MORPH_CROSS}
     if operation not in operations or shape not in shapes:
@@ -150,12 +177,34 @@ def sketch(image, blur_size=21):
     return np.clip(result, 0, 255).astype(np.uint8)
 
 
-def _watermark(image, mark, opacity, position, margin):
-    base = Image.fromarray(_image(image)).convert("RGBA")
+def _fit_mark(mark, base_w, base_h, margin, scale=None, fit=False):
+    """Skalakan watermark ke `scale` x lebar citra; bila fit=True perkecil agar muat di kanvas."""
+    if scale is not None:
+        if not 0 < scale <= 1:
+            raise ValueError("Skala watermark harus di antara 0 dan 1.")
+        target_w = max(1, int(base_w * scale))
+        ratio = target_w / mark.width
+        mark = mark.resize((target_w, max(1, int(mark.height * ratio))), Image.LANCZOS)
+    if not fit:
+        return mark
+    max_w, max_h = base_w - 2 * margin, base_h - 2 * margin
+    if max_w < 1 or max_h < 1:
+        raise ValueError("Margin watermark terlalu besar untuk citra ini.")
+    if mark.width > max_w or mark.height > max_h:
+        ratio = min(max_w / mark.width, max_h / mark.height)
+        mark = mark.resize((max(1, int(mark.width * ratio)), max(1, int(mark.height * ratio))),
+                           Image.LANCZOS)
+    return mark
+
+
+def _watermark(image, mark, opacity, position, margin, scale=None, fit=False):
+    image = _image(image)
     if not 0 <= opacity <= 1:
         raise ValueError("Opacity harus dalam rentang 0–1.")
-    if not isinstance(margin, int) or margin < 0:
+    if not isinstance(margin, (int, np.integer)) or margin < 0:
         raise ValueError("Margin harus bilangan bulat nonnegatif.")
+    base = Image.fromarray(image).convert("RGBA")
+    mark = _fit_mark(mark, base.width, base.height, int(margin), scale, fit)
     positions = {
         "top-left": (margin, margin),
         "top-right": (base.width - mark.width - margin, margin),
@@ -165,7 +214,7 @@ def _watermark(image, mark, opacity, position, margin):
     }
     if position not in positions:
         raise ValueError("Posisi harus top-left, top-right, bottom-left, bottom-right, atau center.")
-    x, y = positions[position]
+    x, y = (int(v) for v in positions[position])
     if x < 0 or y < 0 or x + mark.width > base.width or y + mark.height > base.height:
         raise ValueError("Watermark dan margin terlalu besar untuk citra.")
     mark = mark.copy()
@@ -174,33 +223,56 @@ def _watermark(image, mark, opacity, position, margin):
     return np.array(base.convert("RGB"))
 
 
+def _load_font(font_size, font_path=None):
+    if font_path:
+        return ImageFont.truetype(font_path, font_size)
+    # Coba font TrueType umum (Windows/Linux/macOS) agar teks tajam, lalu fallback.
+    for candidate in ("arialbd.ttf", "arial.ttf", "DejaVuSans-Bold.ttf", "DejaVuSans.ttf",
+                      "Helvetica.ttc"):
+        try:
+            return ImageFont.truetype(candidate, font_size)
+        except OSError:
+            continue
+    return ImageFont.load_default(size=font_size)
+
+
 def text_watermark(image, text, opacity=0.5, position="bottom-right",
-                   font_size=24, color=(255, 255, 255), margin=10, font_path=None):
+                   font_size=24, color=(255, 255, 255), margin=10, font_path=None,
+                   stroke_width=0, stroke_color=(0, 0, 0), fit=False):
     """Tambahkan teks; font_path opsional menunjuk berkas font TTF/OTF.
 
-    Hasil RGB, termasuk untuk masukan grayscale. Font default membutuhkan
-    Pillow >= 10.1 untuk parameter ukuran.
+    Hasil RGB, termasuk untuk masukan grayscale. stroke_width > 0 menambah outline
+    agar teks terbaca di latar terang/gelap; fit=True mengecilkan teks yang
+    terlalu besar (default: raise ValueError seperti versi asli).
+    Font default membutuhkan Pillow >= 10.1 untuk parameter ukuran.
     """
     if not isinstance(text, str) or not text.strip():
         raise ValueError("Teks watermark tidak boleh kosong.")
-    if not isinstance(font_size, int) or font_size < 1:
+    if not isinstance(font_size, (int, np.integer)) or font_size < 1:
         raise ValueError("Ukuran font harus bilangan bulat positif.")
-    if len(color) != 3 or any(not isinstance(v, (int, np.integer)) or not 0 <= v <= 255 for v in color):
-        raise ValueError("Warna teks harus tiga bilangan bulat RGB 0–255.")
-    font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.load_default(size=font_size)
-    left, top, right, bottom = font.getbbox(text)
+    for c in (color, stroke_color):
+        if len(c) != 3 or any(not isinstance(v, (int, np.integer)) or not 0 <= v <= 255 for v in c):
+            raise ValueError("Warna teks harus tiga bilangan bulat 0–255.")
+    font = _load_font(int(font_size), font_path)
+    left, top, right, bottom = ImageDraw.Draw(Image.new("RGBA", (1, 1))).textbbox(
+        (0, 0), text, font=font, stroke_width=stroke_width)
     mark = Image.new("RGBA", (max(1, right - left), max(1, bottom - top)))
-    ImageDraw.Draw(mark).text((-left, -top), text, font=font, fill=tuple(color) + (255,))
-    return _watermark(image, mark, opacity, position, margin)
+    ImageDraw.Draw(mark).text((-left, -top), text, font=font, fill=tuple(int(v) for v in color) + (255,),
+                              stroke_width=stroke_width,
+                              stroke_fill=tuple(int(v) for v in stroke_color) + (200,))
+    return _watermark(image, mark, opacity, position, margin, fit=fit)
 
 
-def logo_watermark(image, logo, opacity=0.5, position="bottom-right", margin=10):
+def logo_watermark(image, logo, opacity=0.5, position="bottom-right", margin=10, scale=None, fit=False):
     """Tambahkan logo array uint8 RGB/RGBA; kanal alpha logo dipertahankan.
 
-    Ukuran logo dipakai apa adanya; kecilkan logo lebih dahulu bila perlu.
+    `scale` (0–1) mengatur lebar logo relatif terhadap lebar citra; fit=True
+    mengecilkan logo yang terlalu besar agar muat (default: raise ValueError).
     Untuk PNG transparan: np.array(Image.open(path).convert('RGBA')).
     """
     if (not isinstance(logo, np.ndarray) or logo.dtype != np.uint8 or logo.size == 0
             or logo.ndim != 3 or logo.shape[2] not in (3, 4)):
         raise ValueError("Logo harus array uint8 RGB atau RGBA.")
-    return _watermark(image, Image.fromarray(logo).convert("RGBA"), opacity, position, margin)
+    # Pillow menebak mode dari bentuk array: (H,W,3)->RGB, (H,W,4)->RGBA
+    return _watermark(image, Image.fromarray(np.ascontiguousarray(logo)).convert("RGBA"),
+                      opacity, position, margin, scale, fit)

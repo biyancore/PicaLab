@@ -1,7 +1,12 @@
+"""
+Modul peningkatan & restorasi citra untuk PicaLab (format masukan BGR/grayscale uint8).
+
+Catatan: matplotlib hanya di-import di dalam histogram_figure() (lazy import)
+agar startup aplikasi tidak melambat ~1 detik untuk fitur yang jarang dipakai.
+"""
 
 import cv2
 import numpy as np
-from matplotlib.figure import Figure
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -12,7 +17,7 @@ def _image(image):
     if image.size == 0 or not (
         image.ndim == 2 or (image.ndim == 3 and image.shape[2] == 3)
     ):
-        raise ValueError("Citra harus grayscale (H, W) atau RGB (H, W, 3).")
+        raise ValueError("Citra harus grayscale (H, W) atau BGR (H, W, 3).")
     return image
 
 
@@ -26,9 +31,11 @@ def _luminance_apply(image, func):
     """Terapkan func (gray uint8 -> gray uint8) pada luminansi saja agar warna tetap."""
     if image.ndim == 2:
         return func(image)
-    lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+    # Ubah RGB ke BGR conversion
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     lab[:, :, 0] = func(lab[:, :, 0])
-    return cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+    # Ubah kembali LAB ke BGR
+    return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
 
 # ---------------------------------------------------------------------------
@@ -60,17 +67,18 @@ def gamma_correction(image, gamma=1.0):
 # 2. Histogram Equalization & CLAHE
 # ---------------------------------------------------------------------------
 def histogram_equalization(image):
-    """Equalization global. Citra RGB diproses pada kanal luminansi (Y)."""
+    """Equalization global. Citra BGR diproses pada kanal luminansi (Y)."""
     image = _image(image)
     if image.ndim == 2:
         return cv2.equalizeHist(image)
-    ycrcb = cv2.cvtColor(image, cv2.COLOR_RGB2YCrCb)
+    # Ubah RGB ke BGR conversion
+    ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
     ycrcb[:, :, 0] = cv2.equalizeHist(ycrcb[:, :, 0])
-    return cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2RGB)
+    return cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2BGR)
 
 
 def clahe(image, clip_limit=2.0, tile_size=8):
-    """CLAHE (equalization adaptif). Citra RGB diproses pada kanal L (LAB)."""
+    """CLAHE (equalization adaptif). Citra BGR diproses pada kanal L (LAB)."""
     image = _image(image)
     if clip_limit <= 0:
         raise ValueError("Clip limit harus lebih besar dari 0.")
@@ -113,8 +121,14 @@ def bilateral_blur(image, diameter=9, sigma_color=75, sigma_space=75):
 
 
 def blur(image, method="gaussian", kernel_size=5, sigma=0,
-         diameter=9, sigma_color=75, sigma_space=75):
-    """Pintu masuk blur: 'gaussian', 'averaging', 'median', atau 'bilateral'."""
+         diameter=9, sigma_color=75, sigma_space=75, size=None):
+    """Pintu masuk blur: 'gaussian', 'averaging', 'median', atau 'bilateral'.
+
+    `size` adalah alias lama untuk kernel_size (kompatibilitas pemanggil lama).
+    """
+    if size is not None:
+        kernel_size = int(size)
+    method = str(method).strip().lower()
     if method == "gaussian":
         return gaussian_blur(image, kernel_size, sigma)
     if method == "averaging":
@@ -151,6 +165,8 @@ def sharpen(image, method="laplacian", strength=1.0, kernel_size=5, sigma=1.0, a
     strength (0–1) mencampur hasil kernel dengan citra asli.
     """
     image = _image(image)
+    # Normalisasi nama metode: "High-boost" / "high boost" -> "high_boost"
+    method = str(method).strip().lower().replace("-", "_").replace(" ", "_")
     if method == "unsharp":
         return unsharp_mask(image, kernel_size, sigma, amount)
     if method not in _SHARPEN_KERNELS:
@@ -262,7 +278,7 @@ def inpaint_damage(image, damage="bright", threshold=240, radius=3):
         raise ValueError("Jenis kerusakan harus bright atau dark.")
     if not 0 <= threshold <= 255 or radius < 1:
         raise ValueError("Threshold harus 0–255 dan radius minimal 1.")
-    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     if damage == "bright":
         mask = (gray > threshold).astype(np.uint8) * 255
     else:
@@ -299,10 +315,10 @@ def comprehensive_enhancement(image, denoise_strength=5, use_clahe=True, clip_li
 def histogram(image):
     """Jumlah piksel untuk tiap intensitas 0–255 (array panjang 256).
 
-    Citra RGB dikonversi ke grayscale (luminansi) terlebih dahulu.
+    Citra BGR dikonversi ke grayscale (luminansi) terlebih dahulu.
     """
     image = _image(image)
-    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     return np.bincount(gray.ravel(), minlength=256)
 
 
@@ -310,7 +326,8 @@ def channel_histograms(image):
     """Histogram per kanal R, G, B: array bentuk (3, 256)."""
     image = _image(image)
     if image.ndim != 3:
-        raise ValueError("Histogram per kanal membutuhkan citra RGB.")
+        raise ValueError("Histogram per kanal membutuhkan citra BGR.")
+    # Kita menggunakan BGR dari opencv, jadi kembalikan (B, G, R)
     return np.stack([np.bincount(image[:, :, i].ravel(), minlength=256) for i in range(3)])
 
 
@@ -322,6 +339,8 @@ def histogram_figure(before, after, mode="gray"):
     """
     if mode not in ("gray", "rgb"):
         raise ValueError("Mode histogram harus gray atau rgb.")
+    from matplotlib.figure import Figure  # lazy import (lihat docstring modul)
+
     figure = Figure(figsize=(10, 3.4), layout="constrained")
     axes = figure.subplots(1, 2)
     x = np.arange(256)
@@ -329,11 +348,12 @@ def histogram_figure(before, after, mode="gray"):
         image = _image(image)
         if mode == "gray":
             ax.bar(x, histogram(image), width=1.0, color="#555555")
-            gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
             title += f"  (rata-rata {gray.mean():.0f}, std {gray.std():.0f})"
         else:
+            # zip dengan (B, G, R) colors and names karena fungsi channel_histograms menggunakan image BGR
             for counts, color, name in zip(channel_histograms(image),
-                                           ("#d62728", "#2ca02c", "#1f77b4"), "RGB"):
+                                           ("#1f77b4", "#2ca02c", "#d62728"), ("B", "G", "R")):
                 ax.fill_between(x, counts, color=color, alpha=0.35)
                 ax.plot(x, counts, color=color, linewidth=0.8, label=name)
             ax.legend(loc="upper right", fontsize=8)

@@ -1,3 +1,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+venv/
+# Model MediaPipe Tasks diunduh otomatis saat runtime
+mini_photoshop/models/*
+!mini_photoshop/models/.gitkeep
