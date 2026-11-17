@@ -226,11 +226,15 @@ def render_segmentation_menu(tool):
                                          "adaptive": "Adaptive (lokal)"}, "p_th_m")
         p["invert"] = st.sidebar.toggle("Balik hitam & putih", False, key="p_th_inv")
         if p["method"] == "global":
-            p["value"] = st.sidebar.slider("Nilai ambang", 0, 255, 127, key="p_th_v")
+            p["value"] = st.sidebar.slider("Nilai ambang", 0, 255, 127, key="p_th_v",
+                help="0 = hitam, 255 = putih. Tanpa pembalikan warna, ambang lebih tinggi menghasilkan lebih banyak hitam.")
         elif p["method"] == "adaptive":
-            p["adaptive_method"] = _select("Metode adaptif", {"gaussian": "Gaussian", "mean": "Mean"}, "p_th_am")
-            p["block_size"] = _odd_slider("Ukuran area lokal", 3, 51, 11, "p_th_bs")
-            p["c"] = st.sidebar.slider("Konstanta C", -10, 20, 2, key="p_th_c")
+            p["adaptive_method"] = _select("Metode adaptif", {"gaussian": "Gaussian", "mean": "Mean"}, "p_th_am",
+                help="Mean memakai rata-rata area. Gaussian memberi bobot lebih besar pada piksel dekat pusat.")
+            p["block_size"] = _odd_slider("Ukuran area lokal", 3, 51, 11, "p_th_bs",
+                help="Ukuran lingkungan untuk menghitung ambang. Kecil lebih peka pada detail; besar mempertimbangkan area lebih luas. Harus ganjil.")
+            p["c"] = st.sidebar.slider("Konstanta C", -10, 20, 2, key="p_th_c",
+                help="Ambang lokal = rata-rata area − C. Tanpa pembalikan warna, C lebih besar menghasilkan lebih banyak putih.")
     elif tool == "colormask":
         preset = st.sidebar.selectbox("Preset warna", list(COLOR_PRESETS), index=1, key="p_cm_preset")
         h0, h1, s0, s1, v0, v1, wrap = COLOR_PRESETS[preset]
@@ -244,20 +248,55 @@ def render_segmentation_menu(tool):
                                                  "selected": "Warna terpilih saja", "mask": "Mask biner"},
                               "p_cm_out")
     elif tool == "morph":
-        st.sidebar.caption("Citra otomatis dibinerkan (Otsu) sebelum operasi morfologi.")
         p["method"] = _select("Operasi", {"opening": "Opening", "closing": "Closing", "erosion": "Erosion",
                                           "dilation": "Dilation", "gradient": "Gradient (kontur)",
                                           "tophat": "Top-hat", "blackhat": "Black-hat"}, "p_mo_m")
-        p["shape"] = _select("Bentuk kernel", {"rect": "Persegi", "ellipse": "Elips", "cross": "Silang"}, "p_mo_s")
-        p["kernel"] = _odd_slider("Ukuran kernel", 1, 21, 5, "p_mo_k")
-        p["iterations"] = st.sidebar.slider("Iterasi", 1, 10, 1, key="p_mo_it")
+        p["shape"] = _select("Bentuk kernel", {"rect": "Persegi", "ellipse": "Elips", "cross": "Silang"}, "p_mo_s",
+            help="Bentuk area pemeriksaan: persegi mencakup sudut, elips mengikuti bentuk bulat, silang mengikuti arah mendatar dan tegak.")
+        p["kernel"] = _odd_slider("Ukuran kernel", 1, 21, 5, "p_mo_k",
+            help="Kernel adalah area kecil yang memeriksa objek putih. Ukuran lebih besar memengaruhi detail yang lebih besar.")
+        p["iterations"] = st.sidebar.slider("Iterasi", 1, 10, 1, key="p_mo_it",
+            help="Jumlah pengulangan erosion atau dilation dalam operasi. Nilai lebih besar memperkuat perubahan bentuk.")
     elif tool == "edges":
         p["method"] = _select("Operator", {"canny": "Canny", "sobel": "Sobel", "prewitt": "Prewitt",
                                            "laplacian": "Laplacian"}, "p_ed_m")
         p["kernel"] = st.sidebar.select_slider("Ukuran kernel", [3, 5, 7], 3, key="p_ed_k",
                                                disabled=p["method"] == "prewitt")
         if p["method"] == "canny":
-            p["low"], p["high"] = st.sidebar.slider("Ambang Canny", 0, 255, (60, 160), key="p_ed_lh")
+            p["low"], p["high"] = st.sidebar.slider("Ambang Canny", 0, 255, (60, 160), key="p_ed_lh",
+                help="Ambang atas menentukan tepi kuat. Tepi lemah di atas ambang bawah dipertahankan jika terhubung ke tepi kuat.")
+
+    with st.sidebar.expander("Panduan singkat", expanded=False):
+        if tool == "threshold":
+            st.markdown({
+                "global": "**Global** memakai satu batas kecerahan untuk seluruh gambar. Piksel di atas ambang menjadi putih, sisanya hitam.",
+                "otsu": "**Otsu** memilih ambang otomatis dari histogram, lalu mengubah gambar menjadi hitam-putih. Cocok jika kecerahan objek dan latar cukup berbeda.",
+                "adaptive": "**Adaptive** menghitung ambang untuk tiap area kecil. Berguna saat pencahayaan tidak merata atau ada bayangan.",
+            }[p["method"]])
+            st.caption("Balik hitam & putih menukar hasilnya. Histogram hasil biner hanya berisi nilai 0 dan 255; bagian tengah yang kosong itu normal.")
+        elif tool == "colormask":
+            st.markdown("**Color Masking** memilih bagian gambar berdasarkan warna. Mulai dari preset, lalu sesuaikan rentangnya.")
+            st.markdown("**Hue** = jenis warna · **Saturasi** = kepekatan · **Kecerahan** = terang-gelap. Merah berada di dua ujung hue, sehingga memakai pilihan di luar rentang.")
+            st.caption("Mask biner: putih = terpilih, hitam = tidak. Warna terpilih saja memberi latar hitam; Sorot warna memberi latar abu-abu.")
+        elif tool == "morph":
+            st.markdown({
+                "erosion": "**Erosion** memperkecil objek putih dan mengikis bagian tepinya.",
+                "dilation": "**Dilation** memperbesar objek putih dan dapat menyambung celah kecil.",
+                "opening": "**Opening** mengikis lalu memperbesar kembali objek putih. Berguna untuk menghapus bintik putih kecil.",
+                "closing": "**Closing** memperbesar lalu mengikis kembali objek putih. Berguna untuk menutup lubang dan celah hitam kecil.",
+                "gradient": "**Gradient** mengambil selisih dilation dan erosion untuk menampilkan kontur objek.",
+                "tophat": "**Top-hat** mengambil selisih gambar dengan hasil opening untuk menonjolkan detail putih kecil.",
+                "blackhat": "**Black-hat** mengambil selisih hasil closing dengan gambar untuk menonjolkan detail hitam kecil.",
+            }[p["method"]])
+            st.caption("Foto diubah menjadi mask hitam-putih dengan Otsu terlebih dahulu. Operasi bekerja pada objek putih; arah efek bergantung pada warna objek di mask.")
+        elif tool == "edges":
+            st.markdown({
+                "canny": "**Canny** menghasilkan garis tepi tipis dengan dua ambang. Naikkan ambang untuk menyaring tepi lemah; turunkan untuk menangkap lebih banyak detail.",
+                "sobel": "**Sobel** mencari perubahan kecerahan arah mendatar dan tegak, lalu menggabungkannya menjadi peta tepi.",
+                "prewitt": "**Prewitt** mencari perubahan kecerahan arah mendatar dan tegak dengan bobot seragam. Selalu memakai kernel 3×3.",
+                "laplacian": "**Laplacian** memakai turunan kedua untuk menonjolkan perubahan kecerahan yang cepat. Noise juga bisa ikut terlihat.",
+            }[p["method"]])
+            st.caption("Garis terang menunjukkan batas objek atau perubahan kecerahan, termasuk tekstur dan noise.")
     return p
 
 
