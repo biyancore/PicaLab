@@ -357,7 +357,8 @@ def render_sidebar(img_shape=None, show_history: bool = True) -> dict:
     else:
         params.update(_MENUS[category](tool))
 
-    if category not in NO_INTENSITY_CATEGORIES:
+    from utils.pipeline import NO_INTENSITY_TOOLS
+    if category not in NO_INTENSITY_CATEGORIES and (category, tool) not in NO_INTENSITY_TOOLS:
         params["intensity_pct"] = st.sidebar.slider(
             "Kekuatan filter (%)", 0, 100, 100, step=5, key="p_intensity",
             help="Campuran hasil filter dengan gambar asli (alpha blending)")

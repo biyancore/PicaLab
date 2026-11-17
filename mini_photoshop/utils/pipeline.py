@@ -61,6 +61,9 @@ CATEGORIES = {
 NO_INTENSITY_CATEGORIES = {"geometry", "beauty"}
 # Alat yang hasilnya selalu berubah ukuran (blending tidak mungkin)
 GEOMETRY_CHANGES_SIZE = {"resize", "resample", "crop", "rotate", "perspective"}
+# Hasil segmentasi sudah berupa mask atau citra biner; mencampurnya dengan foto
+# asli membuat ambang kembali menjadi gradasi, sehingga slider kekuatan dimatikan.
+NO_INTENSITY_TOOLS = {("segment", "threshold"), ("segment", "colormask"), ("segment", "edges")}
 
 
 def tool_label(params: dict) -> str:
@@ -297,7 +300,8 @@ def apply_processing(image: np.ndarray, params: dict, strict: bool = True) -> Pr
     try:
         out = handler(image, params, ctx)
         out = ensure_bgr(out)
-        if params.get("category") not in NO_INTENSITY_CATEGORIES:
+        if (params.get("category") not in NO_INTENSITY_CATEGORIES
+                and (params.get("category"), params.get("tool")) not in NO_INTENSITY_TOOLS):
             out = blend_intensity(image, out, params.get("intensity_pct", 100))
         result.image = out
     except beauty.SubjectNotFoundError as exc:

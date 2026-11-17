@@ -65,6 +65,59 @@ Kalimat presentasi: “Global memakai satu nilai ambang. Adaptive menghitung amb
 secara lokal, jadi lebih tahan terhadap bayangan. Otsu mencari ambang terbaik dari
 histogram, sehingga pengguna tidak perlu menebak angka.”
 
+### Penjelasan untuk slider dan histogram
+
+**Kekuatan filter** adalah persentase campuran hasil filter dengan foto asli.
+Untuk thresholding, biarkan di **100%** agar hasil tetap hitam-putih. Pada 50%,
+hasil biner dicampur dengan foto asli sehingga muncul kembali abu-abu. Itulah
+sebabnya histogram pada 50% masih berisi banyak nilai, sedangkan pada 100% hanya
+ada dua nilai: 0 dan 255. Pada aplikasi sekarang, slider ini disembunyikan untuk
+thresholding, color masking, dan deteksi tepi karena ketiganya menghasilkan mask.
+
+Histogram yang tampak kosong di bagian tengah pada 100% adalah hal yang benar.
+Semua piksel sudah masuk ke dua ujung: hitam (0) atau putih (255). Grafik tetap
+memiliki 256 nilai pada sumbu X, tetapi hanya dua nilai yang berisi piksel.
+
+**Nilai ambang global** adalah batas pemisah kecerahan piksel:
+
+- Piksel dengan nilai **lebih besar dari ambang** menjadi putih (255).
+- Piksel dengan nilai **sama dengan atau lebih kecil dari ambang** menjadi hitam (0).
+
+Skala 0–255 menunjukkan kecerahan: 0 paling gelap (hitam), 255 paling terang
+(putih). Nilai ambang yang **lebih tinggi** membuat lebih sedikit piksel menjadi
+putih, sehingga hasilnya lebih banyak hitam. Nilai ambang yang **lebih rendah**
+membuat lebih banyak piksel menjadi putih. Jika “Balik hitam & putih” aktif,
+hubungan ini terbalik.
+
+**Adaptive threshold** memakai dua metode:
+
+- **Mean**: ambang lokal adalah rata-rata kecerahan di area sekitar.
+- **Gaussian**: ambang lokal adalah rata-rata berbobot, dengan piksel yang lebih
+  dekat ke pusat diberi pengaruh lebih besar. Hasilnya biasanya lebih halus.
+
+**Ukuran area lokal** menentukan seberapa luas lingkungan yang dipakai untuk
+menghitung ambang. Area yang lebih besar membuat ambang mengikuti perubahan
+cahaya secara lebih umum dan biasanya menghasilkan lebih sedikit area putih.
+Area yang lebih kecil membuat ambang lebih peka terhadap detail dan tepi, sehingga
+hasilnya bisa lebih ramai. Ukuran harus ganjil, misalnya 11, 31, atau 51.
+
+**Konstanta C** dikurangkan dari ambang lokal. Rumus sederhananya:
+
+```text
+ambang_lokal = rata_rata_area - C
+piksel > ambang_lokal  ->  putih
+```
+
+C yang **lebih besar** membuat ambang lebih rendah, sehingga lebih banyak piksel
+menjadi putih. C yang **lebih kecil** membuat ambang lebih tinggi, sehingga lebih
+banyak piksel menjadi hitam. C bisa negatif; dalam kasus itu ambang naik dan area
+putih berkurang. Pada aplikasi, C bernilai −10 sampai 20 dengan nilai awal 2.
+
+Kalimat presentasi: “Pada threshold global, saya mengatur satu batas untuk seluruh
+foto. Pada adaptive, batas dihitung per area. Area lokal yang lebih besar membuat
+batas mengikuti cahaya secara lebih umum, sedangkan C menggeser batas itu: C lebih
+besar menghasilkan lebih banyak area putih.”
+
 ## 2. Color Masking
 
 Color masking memilih piksel berdasarkan rentang warna. Citra RGB diubah dulu ke HSV,
