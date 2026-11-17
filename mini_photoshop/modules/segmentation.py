@@ -89,7 +89,9 @@ def color_masking(image, lower_hsv=(0, 0, 0), upper_hsv=(179, 255, 255)):
         raise ValueError("Batas HSV tidak valid: H=0–179, S/V=0–255.")
     lower, upper = lower.astype(np.uint8), upper.astype(np.uint8)
     hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-    if lower[0] <= upper[0]:
+    # Batas dari sidebar sudah diurutkan; H bawah > H atas menandai rentang
+    # yang melewati nol, bukan rentang kosong.
+    if lower[0] < upper[0]:
         mask = cv2.inRange(hsv, lower, upper)
     else:
         mask = cv2.bitwise_or(
